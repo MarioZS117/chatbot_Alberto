@@ -11,8 +11,7 @@ import os
 
 # URL de conexión provista (Neon Postgres). Puedes moverla a bot/config.py si prefieres.
 NEON_DATABASE_URL = (
-	"postgresql://neondb_owner:npg_4OstDWqC5niL@ep-fancy-bonus-adk7haoq-pooler.c-2.us-east-1.aws.neon.tech/neondb"
-	"?sslmode=require&channel_binding=require"
+    "postgresql://neondb_owner:npg_LC2WH5TpBGwy@ep-tiny-haze-ad2inp9q-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 )
 
 
@@ -74,6 +73,7 @@ def ensure_tables():
     );
 	CREATE TABLE IF NOT EXISTS citas (
         id SERIAL PRIMARY KEY,
+		asunto TEXT NOT NULL,
         usuario_id INT REFERENCES usuarios(id),
         fecha TIMESTAMP WITH TIME ZONE NOT NULL,
         creado_en TIMESTAMP WITH TIME ZONE DEFAULT now()
