@@ -38,6 +38,8 @@ def get_response(text, user_name):
     keyboard = [
         [InlineKeyboardButton("Ordenar comida a domicilio.", callback_data='ordenar_comida')],
         [InlineKeyboardButton("Agendar una cita.", callback_data='agendar_cita')],
+        [InlineKeyboardButton("Ver mis órdenes", callback_data='revisar_ordenes')],
+        [InlineKeyboardButton("Ver mis citas", callback_data='revisar_citas')],
     ]
 
     # saludos
@@ -70,14 +72,35 @@ def get_response(text, user_name):
         markup = InlineKeyboardMarkup(keyboard)
         return respuestas, markup
 
-    # Si viene una línea con formato "Nombre, Teléfono, Correo" intentamos parsear y guardar
+    # Si viene una línea con formato "Nombre, Teléfono, Correo" intentamos parsear y devolver el siguiente paso
     if text.count(",") >= 2:
         # Cuando el usuario envía "Nombre, Teléfono, Correo" flujos solo responde
         # para confirmar recepción; el handler del bot es responsable de guardar los datos.
         partes = [p.strip() for p in text.split(",", 2)]
         nombre = partes[0]
-        respuestas.append("Gracias, tus datos han sido recibidos. Ahora selecciona el platillo que deseas ordenar.")
-        return respuestas, None
+        # Dependiendo de la selección actual, devolvemos el siguiente prompt
+        if seleccion == 'empezar_orden':
+            respuestas.append("Gracias, tus datos han sido recibidos. Ahora selecciona el platillo que deseas ordenar.")
+            # además de mostrar el menú de platillos, ofrecemos revisar órdenes previas
+            respuestas.append("También puedes revisar tus órdenes previas o citas.")
+            keyboard = [
+                [InlineKeyboardButton("Ver mis órdenes", callback_data='revisar_ordenes')],
+                [InlineKeyboardButton("Ver mis citas", callback_data='revisar_citas')],
+            ]
+            return respuestas, InlineKeyboardMarkup(keyboard)
+        elif seleccion == 'empezar_cita':
+            respuestas.append("Gracias, tus datos han sido recibidos.")
+            respuestas.append("Por favor ingresa la fecha y hora deseada para la cita en formato YYYY-MM-DD HH:MM")
+            respuestas.append("Ejemplo: 2025-10-12 15:30")
+            respuestas.append("También puedes revisar tus citas u órdenes anteriores.")
+            keyboard = [
+                [InlineKeyboardButton("Ver mis citas", callback_data='revisar_citas')],
+                [InlineKeyboardButton("Ver mis órdenes", callback_data='revisar_ordenes')],
+            ]
+            return respuestas, InlineKeyboardMarkup(keyboard)
+        else:
+            respuestas.append("Gracias, tus datos han sido recibidos. Un asesor se pondrá en contacto contigo.")
+            return respuestas, None
     if seleccion == "empezar_orden":
         respuestas.append("¡Perfecto! Vamos a ordenar tu comida.")
         respuestas.append("Por favor, selecciona el platillo a ordenar.")
@@ -100,6 +123,11 @@ def get_response(text, user_name):
         else:
             # mostrar teclado para seleccionar platillo
             return respuestas, InlineKeyboardMarkup(keyboard)
+    if seleccion == "empezar_cita":
+        respuestas.append("¡Perfecto! Vamos a agendar tu cita.")
+        respuestas.append("Por favor ingresa la fecha y hora deseada en formato YYYY-MM-DD HH:MM")
+        respuestas.append("Ejemplo: 2025-10-12 15:30")
+        return respuestas, None
     # fallback
     respuestas.append("No entendí tu mensaje. Puedes escribir 'hola' o usar los botones.")
     markup = InlineKeyboardMarkup(keyboard)
