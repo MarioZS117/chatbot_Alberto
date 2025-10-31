@@ -1,101 +1,134 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+import random
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
+import re  # Se importa la librería para expresiones regulares
+# from bot.utils import guardar_usuario, guardar_datos, get_precio_producto, guardar_cotizacion
+import threading
+# flujos solo construye mensajes y botones; la persistencia la maneja handlers
 
-# Variable global para controlar el flujo
+
+# selección de flujo actual (se establece por handlers cuando el usuario elige una opción)
 seleccion = None
 
-def get_response(text: str, user_name: str) -> tuple[list[str], InlineKeyboardMarkup | None]:
+# --- Listas de Opciones ---
+saludos = ["hola", "hols", "ola", "hoa", "hla", "que hay", "aloooh", "holiwis", "que onda", "ayuda"]
+respuestas_saludos = [
+    "¡Hola! espero que estés bien. Te doy la bienvenida a NutriLogic. Te ayudamos con tu nutrición.",
+    "¡Hey! ¿Qué tal? Estás en NutriLogic, el hogar de la nutrición.",
+    "¡Saludos!. Te presento a NutriLogic, en donde te ayudamos con tu alimentación.",
+]
+
+
+def get_response(text, user_name):
+    """Devuelve (respuestas:list[str], markup:InlineKeyboardMarkup|None).
+
+    Siempre garantiza que se retorne una tupla. Maneja saludos, comandos básicos,
+    selección de flujo (ordenar_comida/agendar_cita) y el parseo simple de datos "Nombre, Teléfono, Correo".
+    """
     global seleccion
 
-    # Si el usuario envía "hola" o inicia el chat, mostramos el menú principal
-    if text.lower() in ['hola', 'hi', 'hello', 'inicio', 'start', 'menu']:
-        seleccion = None
-        # Menú principal con opciones ampliadas
-        keyboard = [
-            [InlineKeyboardButton("🍽️ Ordenar comida", callback_data='ordenar_comida')],
-            [InlineKeyboardButton("📅 Agendar cita", callback_data='agendar_cita')],
-            [InlineKeyboardButton("🤖 Consultar nutrición (IA)", callback_data='ayuda_ia')],
-            [InlineKeyboardButton("📋 Revisar órdenes", callback_data='revisar_ordenes')],
-            [InlineKeyboardButton("📋 Revisar citas", callback_data='revisar_citas')],
-            [InlineKeyboardButton("❌ Cancelar orden", callback_data='cancelar_orden')],
-            [InlineKeyboardButton("❌ Cancelar cita", callback_data='cancelar_cita')],
-        ]
-        markup = InlineKeyboardMarkup(keyboard)
-        return [f"¡Hola {user_name}! Soy tu asistente virtual. ¿En qué puedo ayudarte?"], markup
+    if not isinstance(text, str):
+        return ["Entrada inválida."], None
 
-    # Si el usuario elige una opción del menú, manejamos según la selección
-    if seleccion is None:
-        # Si no hay selección, mostramos el menú principal
-        keyboard = [
-            [InlineKeyboardButton("🍽️ Ordenar comida", callback_data='ordenar_comida')],
-            [InlineKeyboardButton("📅 Agendar cita", callback_data='agendar_cita')],
-            [InlineKeyboardButton("🤖 Consultar nutrición (IA)", callback_data='ayuda_ia')],
-            [InlineKeyboardButton("📋 Revisar órdenes", callback_data='revisar_ordenes')],
-            [InlineKeyboardButton("📋 Revisar citas", callback_data='revisar_citas')],
-            [InlineKeyboardButton("❌ Cancelar orden", callback_data='cancelar_orden')],
-            [InlineKeyboardButton("❌ Cancelar cita", callback_data='cancelar_cita')],
-        ]
-        markup = InlineKeyboardMarkup(keyboard)
-        return [f"¡Hola {user_name}! Soy tu asistente virtual. ¿En qué puedo ayudarte?"], markup
+    text = text.strip()
+    lower = text.lower()
+    respuestas = []
+    markup = None
 
-    # Flujo para ordenar comida
-    if seleccion == 'ordenar_comida':
-        # Submenú de platillos
-        keyboard = [
-            [InlineKeyboardButton("🍗 Pollo salteado con arroz blanco", callback_data='ordenar_pollo')],
-            [InlineKeyboardButton("🥗 Ensalada César", callback_data='ordenar_ensalada_cesar')],
-            [InlineKeyboardButton("🍲 Sopa de verduras", callback_data='ordenar_sopa')],
-            [InlineKeyboardButton("🔙 Volver al menú principal", callback_data='menu_principal')],
-        ]
-        markup = InlineKeyboardMarkup(keyboard)
-        return [f"{user_name}, has seleccionado ordenar comida. Por favor elige un platillo:"], markup
-
-    # Flujo para agendar cita
-    if seleccion == 'agendar_cita':
-        # Pedir fecha y hora
-        return [f"{user_name}, para agendar una cita, primero necesito que ingreses tus datos personales en el formato: Nombre, Teléfono, Correo", "Por ejemplo: Juan Pérez, 123456789, juan@example.com"], None
-
-    # Flujo para consultar nutrición
-    if seleccion == 'ayuda_ia':
-        return [f"{user_name}, puedes contarme sobre el platillo del cual quieres conocer información nutricional. Descríbelo brevemente."], None
-
-    # Flujo para platillos específicos
-    if seleccion in ['ordenar_pollo', 'ordenar_ensalada_cesar', 'ordenar_sopa']:
-        # Mapear nombres de platillos
-        platillo_map = {
-            'ordenar_pollo': 'Pollo salteado con arroz blanco',
-            'ordenar_ensalada_cesar': 'Ensalada César',
-            'ordenar_sopa': 'Sopa de verduras'
-        }
-        platillo = platillo_map.get(seleccion, 'platillo')
-        # Pedir la cantidad
-        return [f"Has seleccionado {platillo}. Por favor, ingresa la cantidad que deseas ordenar (solo el número):"], None
-
-    # Flujo para empezar orden (después de ingresar datos personales)
-    if seleccion == 'empezar_orden':
-        # Submenú de platillos
-        keyboard = [
-            [InlineKeyboardButton("🍗 Pollo salteado con arroz blanco", callback_data='ordenar_pollo')],
-            [InlineKeyboardButton("🥗 Ensalada César", callback_data='ordenar_ensalada_cesar')],
-            [InlineKeyboardButton("🍲 Sopa de verduras", callback_data='ordenar_sopa')],
-            [InlineKeyboardButton("🔙 Volver al menú principal", callback_data='menu_principal')],
-        ]
-        markup = InlineKeyboardMarkup(keyboard)
-        return [f"Perfecto {user_name}, ahora elige el platillo que deseas ordenar:"], markup
-
-    # Flujo para empezar cita (después de ingresar datos personales)
-    if seleccion == 'empezar_cita':
-        return [f"Excelente {user_name}, ahora necesito que ingreses la fecha y hora para tu cita en el formato: YYYY-MM-DD HH:MM", "Por ejemplo: 2025-10-12 15:30"], None
-
-    # Si no se reconoce el flujo, volver al menú principal
-    seleccion = None
+    # teclado común
     keyboard = [
-        [InlineKeyboardButton("🍽️ Ordenar comida", callback_data='ordenar_comida')],
-        [InlineKeyboardButton("📅 Agendar cita", callback_data='agendar_cita')],
-        [InlineKeyboardButton("🤖 Consultar nutrición (IA)", callback_data='ayuda_ia')],
-        [InlineKeyboardButton("📋 Revisar órdenes", callback_data='revisar_ordenes')],
-        [InlineKeyboardButton("📋 Revisar citas", callback_data='revisar_citas')],
-        [InlineKeyboardButton("❌ Cancelar orden", callback_data='cancelar_orden')],
-        [InlineKeyboardButton("❌ Cancelar cita", callback_data='cancelar_cita')],
+        [InlineKeyboardButton("Ordenar comida a domicilio.", callback_data='ordenar_comida')],
+        [InlineKeyboardButton("Agendar una cita.", callback_data='agendar_cita')],
+        [InlineKeyboardButton("Ver mis órdenes", callback_data='revisar_ordenes')],
+        [InlineKeyboardButton("Ver mis citas", callback_data='revisar_citas')],
     ]
+
+    # saludos
+    if lower in saludos:
+        respuestas.append(random.choice(respuestas_saludos))
+        respuestas.append("¿Dime, que es lo que necesitas?")
+        markup = InlineKeyboardMarkup(keyboard)
+        seleccion = text
+        return respuestas, markup
+
+    # comandos
+    if lower == "/start":
+        respuestas.append(f"Hola {user_name}, bienvenido al bot de TecnoStore.")
+        return respuestas, None
+    if lower == "/help":
+        respuestas.append("¡Hola! Soy el asistente virtual de TecnoStore. Puedes saludarme con 'hola'.")
+        return respuestas, None
+
+    # callbacks (cuando el usuario selecciona una opción)
+    # Consideramos dos fuentes: el texto actual (lower) o la variable de módulo `seleccion`
+    if (lower in ("ordenar_comida", "agendar_cita")) or (not lower and seleccion in ("ordenar_comida", "agendar_cita")):
+        respuestas.append("Ingrese sus datos en el siguiente formato: Nombre, Teléfono, Correo")
+        respuestas.append("Ejemplo: Juan Perez, 555-1234, juanperez@example.com")
+        # devolvemos el teclado por conveniencia
+        source = lower if lower in ("ordenar_comida", "agendar_cita") else seleccion
+        if source == "ordenar_comida":
+            seleccion = "empezar_orden"
+        elif source == "agendar_cita":
+            seleccion = "empezar_cita"
+        markup = InlineKeyboardMarkup(keyboard)
+        return respuestas, markup
+
+    # Si viene una línea con formato "Nombre, Teléfono, Correo" intentamos parsear y devolver el siguiente paso
+    if text.count(",") >= 2:
+        # Cuando el usuario envía "Nombre, Teléfono, Correo" flujos solo responde
+        # para confirmar recepción; el handler del bot es responsable de guardar los datos.
+        partes = [p.strip() for p in text.split(",", 2)]
+        nombre = partes[0]
+        # Dependiendo de la selección actual, devolvemos el siguiente prompt
+        if seleccion == 'empezar_orden':
+            respuestas.append("Gracias, tus datos han sido recibidos. Ahora selecciona el platillo que deseas ordenar.")
+            # además de mostrar el menú de platillos, ofrecemos revisar órdenes previas
+            respuestas.append("También puedes revisar tus órdenes previas o citas.")
+            keyboard = [
+                [InlineKeyboardButton("Ver mis órdenes", callback_data='revisar_ordenes')],
+                [InlineKeyboardButton("Ver mis citas", callback_data='revisar_citas')],
+            ]
+            return respuestas, InlineKeyboardMarkup(keyboard)
+        elif seleccion == 'empezar_cita':
+            respuestas.append("Gracias, tus datos han sido recibidos.")
+            respuestas.append("Por favor ingresa la fecha y hora deseada para la cita en formato YYYY-MM-DD HH:MM")
+            respuestas.append("Ejemplo: 2025-10-12 15:30")
+            respuestas.append("También puedes revisar tus citas u órdenes anteriores.")
+            keyboard = [
+                [InlineKeyboardButton("Ver mis citas", callback_data='revisar_citas')],
+                [InlineKeyboardButton("Ver mis órdenes", callback_data='revisar_ordenes')],
+            ]
+            return respuestas, InlineKeyboardMarkup(keyboard)
+        else:
+            respuestas.append("Gracias, tus datos han sido recibidos. Un asesor se pondrá en contacto contigo.")
+            return respuestas, None
+    if seleccion == "empezar_orden":
+        respuestas.append("¡Perfecto! Vamos a ordenar tu comida.")
+        respuestas.append("Por favor, selecciona el platillo a ordenar.")
+        keyboard = [
+            [InlineKeyboardButton("Pollo salteado con arroz blanco", callback_data='ordenar_pollo')],
+            [InlineKeyboardButton("Ensalada César", callback_data='ordenar_ensalada_cesar')],
+            [InlineKeyboardButton("Sopa de verduras", callback_data='ordenar_sopa')],
+        ]
+        # Si se ha enviado el callback del platillo, pedimos la cantidad; si no, mostramos el teclado
+        if lower in ("ordenar_pollo", "ordenar_ensalada_cesar", "ordenar_sopa"):
+            if lower == "ordenar_pollo":
+                respuestas.append("Has seleccionado Pollo salteado con arroz blanco.")
+            elif lower == "ordenar_ensalada_cesar":
+                respuestas.append("Has seleccionado Ensalada César.")
+            elif lower == "ordenar_sopa":
+                respuestas.append("Has seleccionado Sopa de verduras.")
+            # Pedimos la cantidad al usuario; la creación de la orden la hará el handler
+            respuestas.append("Por favor, ingresa la cantidad que deseas (número entero).")
+            return respuestas, None
+        else:
+            # mostrar teclado para seleccionar platillo
+            return respuestas, InlineKeyboardMarkup(keyboard)
+    if seleccion == "empezar_cita":
+        respuestas.append("¡Perfecto! Vamos a agendar tu cita.")
+        respuestas.append("Por favor ingresa la fecha y hora deseada en formato YYYY-MM-DD HH:MM")
+        respuestas.append("Ejemplo: 2025-10-12 15:30")
+        return respuestas, None
+    # fallback
+    respuestas.append("No entendí tu mensaje. Puedes escribir 'hola' o usar los botones.")
     markup = InlineKeyboardMarkup(keyboard)
-    return [f"¡Hola {user_name}! Soy tu asistente virtual. ¿En qué puedo ayudarte?"], markup
+    return respuestas, markup
