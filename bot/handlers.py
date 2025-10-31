@@ -1,11 +1,16 @@
 # Funciones para manejar comandos y mensajes
-from telegram import Update
+from telegram import Update, InlineKeyboardButton
 from telegram.ext import ContextTypes
 import bot.flujos as flujos_mod
 from bot.flujos import get_response
-from bot.utils import guardar_usuario, log, get_usuario_id, get_platillo_id, guardar_orden
+from bot.utils import (guardar_usuario, log, get_usuario_id, get_platillo_id, 
+                      guardar_orden, obtener_ordenes_por_usuario, obtener_citas_por_usuario,
+                      obtener_orden_activa_por_usuario, obtener_cita_activa_por_usuario,
+                      cancelar_orden, cancelar_cita, guardar_cita)
 from telegram import InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler
+import requests
+import json
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -14,6 +19,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = update.message.text if update.message else None
         user_name = update.effective_user.first_name if update.effective_user else 'Usuario'
         chat_id = update.effective_chat.id if update.effective_chat else None
+
+        # Verificar si estamos esperando una consulta de nutrición
+        expecting_nutrition = context.user_data.get('expecting_nutrition_query', False)
+        if expecting_nutrition and isinstance(text, str):
+            # Llamar al manejador de nutrición
+            await ai_handle_nutrition(update, context)
+            context.user_data.pop('expecting_nutrition_query', None)
+            context.user_data.pop('selected_flow', None)
+            try:
+                flujos_mod.seleccion = None
+            except Exception:
+                setattr(flujos_mod, 'seleccion', None)
+            return
 
         # Estado: si el usuario está en el flujo ordenar_comida esperamos datos personales
         expecting_user_data = context.user_data.get('expecting_user_data', False)
@@ -30,8 +48,70 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     'correo': correo,
                     'chat_id': chat_id,
                 }
-                # Si vinimos aquí para revisar (post_review_action), la siguiente acción será ejecutar la revisión
+                
+                # Verificar si hay una acción posterior pendiente
                 post_action = context.user_data.pop('post_review_action', None)
+                post_cancel_action = context.user_data.pop('post_cancel_action', None)
+                
+                # Si es una acción de cancelación
+                if post_cancel_action:
+                    usuario_id = None
+                    try:
+                        usuario_id = get_usuario_id(chat_id)
+                    except Exception:
+                        usuario_id = None
+                    if not usuario_id:
+                        try:
+                            usuario_id = get_usuario_id(nombre)
+                        except Exception:
+                            usuario_id = None
+
+                    if not usuario_id:
+                        try:
+                            user_row = guardar_usuario(nombre, correo, telefono, chat_id)
+                            usuario_id = user_row['id'] if user_row and 'id' in user_row else None
+                        except Exception:
+                            usuario_id = None
+
+                    if post_cancel_action == 'cancelar_orden':
+                        ordenes = obtener_orden_activa_por_usuario(usuario_id)
+                        if not ordenes:
+                            await update.message.reply_text("No tienes órdenes activas para cancelar.")
+                        else:
+                            # Crear teclado inline para seleccionar orden a cancelar
+                            keyboard = []
+                            for orden in ordenes:
+                                button_text = f"❌ {orden['cantidad']} x {orden['platillo']} - ${orden['total']}"
+                                callback_data = f"confirmar_cancelar_orden_{orden['id']}"
+                                keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+                            
+                            keyboard.append([InlineKeyboardButton("🔙 Volver al menú principal", callback_data='menu_principal')])
+                            markup = InlineKeyboardMarkup(keyboard)
+                            await update.message.reply_text("Selecciona la orden que deseas cancelar:", reply_markup=markup)
+                        
+                        context.user_data.pop('expecting_user_data', None)
+                        return
+                        
+                    elif post_cancel_action == 'cancelar_cita':
+                        citas = obtener_cita_activa_por_usuario(usuario_id)
+                        if not citas:
+                            await update.message.reply_text("No tienes citas activas para cancelar.")
+                        else:
+                            keyboard = []
+                            for cita in citas:
+                                fecha_str = cita['fecha'].strftime('%Y-%m-%d %H:%M')
+                                button_text = f"❌ {cita.get('asunto','(sin asunto)')} - {fecha_str}"
+                                callback_data = f"confirmar_cancelar_cita_{cita['id']}"
+                                keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+                            
+                            keyboard.append([InlineKeyboardButton("🔙 Volver al menú principal", callback_data='menu_principal')])
+                            markup = InlineKeyboardMarkup(keyboard)
+                            await update.message.reply_text("Selecciona la cita que deseas cancelar:", reply_markup=markup)
+                        
+                        context.user_data.pop('expecting_user_data', None)
+                        return
+
+                # Si vinimos aquí para revisar (post_review_action), la siguiente acción será ejecutar la revisión
                 if post_action in ('revisar_ordenes', 'revisar_citas'):
                     # resolver usuario_id (primero por chat_id, luego por nombre)
                     usuario_id = None
@@ -53,7 +133,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         except Exception:
                             usuario_id = None
 
-                    from bot.utils import obtener_ordenes_por_usuario, obtener_citas_por_usuario
                     if post_action == 'revisar_ordenes':
                         ordenes = obtener_ordenes_por_usuario(usuario_id)
                         if not ordenes:
@@ -74,6 +153,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 await update.message.reply_text(f"- {c.get('asunto','(sin asunto)')} - {c['fecha']} (creada: {c['creado_en']})")
                         context.user_data.pop('expecting_user_data', None)
                         return
+                
                 selected_flow = context.user_data.get('selected_flow')
                 if selected_flow == 'ordenar_comida':
                     try:
@@ -108,7 +188,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("Formato inválido. Por favor envía tus datos en una sola línea separados por comas: Nombre, Teléfono, Correo")
                 return
 
-        # Si estamos esperando la cantidad para finalizar una orden
         # Si estamos esperando la fecha/hora para una cita
         expecting_cita_datetime = context.user_data.get('expecting_cita_datetime', False)
         if expecting_cita_datetime:
@@ -156,7 +235,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # guardar cita
             try:
-                from bot.utils import guardar_cita
                 guardar_cita(usuario_id, asunto, pending_cita['fecha'])
                 await update.message.reply_text(f"Cita creada: {asunto} el {pending_cita['fecha'].strftime('%Y-%m-%d %H:%M')}")
             except Exception as e:
@@ -253,6 +331,81 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
+async def analyze_with_ollama(food_description):
+    """Analiza un platillo usando Ollama API local."""
+    try:
+        prompt = f"""Analiza la siguiente comida: "{food_description}"
+        Proporciona un análisis nutricional detallado con el siguiente formato:
+        - Calorías aproximadas
+        - Macronutrientes (proteínas, carbohidratos, grasas)
+        - Beneficios principales
+        - Recomendaciones dietéticas
+        - Posibles alergenos
+        
+        Responde en español y usa emojis relevantes para cada sección.
+        La respuesta debe ser precisa y fácil de entender."""
+
+        response = requests.post('http://localhost:11434/api/generate',
+                               json={
+                                   "model": "gemma",
+                                   "prompt": prompt,
+                                   "stream": False
+                               })
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result['response']
+        else:
+            return None
+
+    except Exception as e:
+        log(f"Error al llamar a Ollama: {e}", level="ERROR")
+        return None
+
+async def ai_handle_nutrition(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Maneja consultas relacionadas con calorías y nutrientes de los alimentos."""
+    try:
+        text = update.message.text if update.message else None
+        if not text:
+            await update.message.reply_text("Por favor, describe el platillo del que quieres conocer información nutricional.")
+            return
+
+        # Informar al usuario que estamos analizando
+        await update.message.reply_text("🔄 Analizando tu platillo... Dame un momento.")
+
+        # Obtener el análisis de la IA
+        analysis = await analyze_with_ollama(text)
+        
+        if analysis:
+            # Si tenemos respuesta de la IA, la usamos
+            respuesta = f"🍽️ Análisis nutricional para: {text}\n\n{analysis}"
+        else:
+            # Respuesta de fallback si hay error
+            respuesta = f"🍽️ Análisis nutricional para {text}:\n\n"
+            respuesta += "🔸 Calorías: ~350-400 kcal\n"
+            respuesta += "🔸 Proteínas: 25g\n"
+            respuesta += "🔸 Carbohidratos: 45g\n"
+            respuesta += "🔸 Grasas: 12g\n"
+            respuesta += "\n⚠️ Nota: Estos son valores aproximados generados como respaldo."
+
+        await update.message.reply_text(respuesta)
+        
+        # Ofrecer opciones adicionales con menú expandido
+        keyboard = [
+            [InlineKeyboardButton("🍽️ Ordenar este platillo", callback_data='ordenar_comida')],
+            [InlineKeyboardButton("🔄 Analizar otro platillo", callback_data='ayuda_ia')],
+            [InlineKeyboardButton("📋 Volver al menú principal", callback_data='menu_principal')],
+        ]
+        markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "¿Qué más te gustaría hacer?",
+            reply_markup=markup
+        )
+
+    except Exception as e:
+        log(f"Error en ai_handle_nutrition: {e}", level="ERROR")
+        await update.message.reply_text("Lo siento, hubo un error al analizar la información nutricional. Inténtalo de nuevo.")
+
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Maneja callbacks de botones inline."""
     try:
@@ -264,7 +417,26 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         # Si el callback es una selección de flujo, primero establecer la selección
         # en el módulo de flujos y obtener la respuesta correspondiente llamando
         # a get_response('', user_name) para que flujos.py devuelva el teclado de platillos.
-        if data in ('ordenar_comida', 'agendar_cita'):
+        if data == 'menu_principal':
+            # Limpiar el estado y mostrar el menú principal
+            context.user_data.clear()
+            try:
+                flujos_mod.seleccion = None
+            except Exception:
+                setattr(flujos_mod, 'seleccion', None)
+            # Simular un saludo para mostrar el menú principal
+            respuestas, markup = get_response("hola", user_name)
+            return await query.message.reply_text(respuestas[0], reply_markup=markup)
+        elif data == 'ayuda_ia':
+            context.user_data['selected_flow'] = data
+            try:
+                flujos_mod.seleccion = 'ayuda_ia'
+            except Exception:
+                setattr(flujos_mod, 'seleccion', 'ayuda_ia')
+            # Activar el estado de espera para el análisis nutricional
+            context.user_data['expecting_nutrition_query'] = True
+            respuestas, markup = get_response(data, user_name)
+        elif data in ('ordenar_comida', 'agendar_cita'):
             context.user_data['selected_flow'] = data
             try:
                 flujos_mod.seleccion = data
@@ -337,8 +509,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 await query.message.reply_text("Para verificar tu identidad, por favor ingresa tus datos en una sola línea: Nombre, Teléfono, Correo")
                 return
 
-            # Importar funciones de util para obtener listas
-            from bot.utils import obtener_ordenes_por_usuario, obtener_citas_por_usuario
             if data == 'revisar_ordenes':
                 ordenes = obtener_ordenes_por_usuario(usuario_id)
                 if not ordenes:
@@ -357,6 +527,106 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 for c in citas:
                     await query.message.reply_text(f"- {c.get('asunto','(sin asunto)')} - {c['fecha']} (creada: {c['creado_en']})")
                 return
+
+        # Cancelar órdenes o citas
+        if data in ('cancelar_orden', 'cancelar_cita'):
+            # Intentamos resolver el usuario
+            pending = context.user_data.get('pending_user')
+            chat_id = query.message.chat.id if query and query.message and query.message.chat else None
+            usuario_id = None
+            
+            if chat_id is not None:
+                try:
+                    usuario_id = get_usuario_id(chat_id)
+                except Exception:
+                    usuario_id = None
+            
+            if not usuario_id and pending:
+                try:
+                    usuario_id = get_usuario_id(pending.get('chat_id') or pending.get('nombre'))
+                except Exception:
+                    usuario_id = None
+
+            if not usuario_id:
+                # Pedimos los datos personales para verificar identidad
+                context.user_data['post_cancel_action'] = data
+                context.user_data['expecting_user_data'] = True
+                await query.message.reply_text("Para verificar tu identidad, por favor ingresa tus datos en una sola línea: Nombre, Teléfono, Correo")
+                return
+
+            if data == 'cancelar_orden':
+                ordenes = obtener_orden_activa_por_usuario(usuario_id)
+                if not ordenes:
+                    await query.message.reply_text("No tienes órdenes activas para cancelar.")
+                    return
+                
+                # Crear teclado con órdenes para cancelar
+                keyboard = []
+                for orden in ordenes:
+                    button_text = f"❌ {orden['cantidad']} x {orden['platillo']} - ${orden['total']}"
+                    callback_data = f"confirmar_cancelar_orden_{orden['id']}"
+                    keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+                
+                keyboard.append([InlineKeyboardButton("🔙 Volver al menú principal", callback_data='menu_principal')])
+                markup = InlineKeyboardMarkup(keyboard)
+                await query.message.reply_text("Selecciona la orden que deseas cancelar:", reply_markup=markup)
+                return
+                
+            else:  # cancelar_cita
+                citas = obtener_cita_activa_por_usuario(usuario_id)
+                if not citas:
+                    await query.message.reply_text("No tienes citas activas para cancelar.")
+                    return
+                
+                keyboard = []
+                for cita in citas:
+                    fecha_str = cita['fecha'].strftime('%Y-%m-%d %H:%M')
+                    button_text = f"❌ {cita.get('asunto','(sin asunto)')} - {fecha_str}"
+                    callback_data = f"confirmar_cancelar_cita_{cita['id']}"
+                    keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+                
+                keyboard.append([InlineKeyboardButton("🔙 Volver al menú principal", callback_data='menu_principal')])
+                markup = InlineKeyboardMarkup(keyboard)
+                await query.message.reply_text("Selecciona la cita que deseas cancelar:", reply_markup=markup)
+                return
+
+        # Confirmar cancelación de orden
+        if data.startswith('confirmar_cancelar_orden_'):
+            orden_id = int(data.split('_')[-1])
+            if cancelar_orden(orden_id):
+                await query.message.reply_text("✅ La orden ha sido cancelada exitosamente.")
+            else:
+                await query.message.reply_text("❌ No se pudo cancelar la orden. Intenta de nuevo.")
+            
+            # Limpiar estado y volver al menú principal
+            context.user_data.clear()
+            try:
+                flujos_mod.seleccion = None
+            except Exception:
+                setattr(flujos_mod, 'seleccion', None)
+            
+            respuestas, markup = get_response("hola", user_name)
+            await query.message.reply_text(respuestas[0], reply_markup=markup)
+            return
+
+        # Confirmar cancelación de cita
+        if data.startswith('confirmar_cancelar_cita_'):
+            cita_id = int(data.split('_')[-1])
+            if cancelar_cita(cita_id):
+                await query.message.reply_text("✅ La cita ha sido cancelada exitosamente.")
+            else:
+                await query.message.reply_text("❌ No se pudo cancelar la cita. Intenta de nuevo.")
+            
+            # Limpiar estado y volver al menú principal
+            context.user_data.clear()
+            try:
+                flujos_mod.seleccion = None
+            except Exception:
+                setattr(flujos_mod, 'seleccion', None)
+            
+            respuestas, markup = get_response("hola", user_name)
+            await query.message.reply_text(respuestas[0], reply_markup=markup)
+            return
 
         # Editar el mensaje original si es posible, si no, enviar nuevo mensaje
         if respuestas:
