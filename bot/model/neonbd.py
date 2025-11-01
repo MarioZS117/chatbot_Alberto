@@ -11,7 +11,7 @@ import os
 
 # URL de conexión provista (Neon Postgres). Puedes moverla a bot/config.py si prefieres.
 NEON_DATABASE_URL = (
-    'postgresql://neondb_owner:npg_4OstDWqC5niL@ep-fancy-bonus-adk7haoq-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
+    "postgresql://neondb_owner:npg_LC2WH5TpBGwy@ep-tiny-haze-ad2inp9q-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 )
 
 
@@ -43,60 +43,44 @@ def get_connection():
 
 
 def ensure_tables():
-    """Asegura que las tablas necesarias existan en la base de datos."""
+    """Crea tablas mínimas necesarias si no existen.
+
+    Actualmente crea la tabla `usuarios` usada por `guardar_usuario`.
+    """
+    create_sql = """
+    CREATE TABLE IF NOT EXISTS usuarios (
+        id SERIAL PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        correo TEXT,
+        telefono TEXT,
+        chat_id BIGINT,
+        creado_en TIMESTAMP WITH TIME ZONE DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS platillos (
+        id SERIAL PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        precio NUMERIC(10, 2) NOT NULL,
+        descripcion TEXT,
+        creado_en TIMESTAMP WITH TIME ZONE DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS ordenes (
+        id SERIAL PRIMARY KEY,
+        usuario_id INT REFERENCES usuarios(id),
+        platillo_id INT REFERENCES platillos(id),
+        cantidad INT NOT NULL,
+        total NUMERIC(10, 2) NOT NULL,
+        creado_en TIMESTAMP WITH TIME ZONE DEFAULT now()
+    );
+	CREATE TABLE IF NOT EXISTS citas (
+        id SERIAL PRIMARY KEY,
+		asunto TEXT NOT NULL,
+        usuario_id INT REFERENCES usuarios(id),
+        fecha TIMESTAMP WITH TIME ZONE NOT NULL,
+        creado_en TIMESTAMP WITH TIME ZONE DEFAULT now()
+    );
+    """
     with get_connection() as conn:
         with conn.cursor() as cur:
-            # Tabla de usuarios
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS usuarios (
-                    id SERIAL PRIMARY KEY,
-                    nombre TEXT NOT NULL,
-                    correo TEXT,
-                    telefono TEXT,
-                    chat_id BIGINT,
-                    creado_en TIMESTAMP DEFAULT NOW()
-                )
-            """)
-            # Tabla de platillos
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS platillos (
-                    id SERIAL PRIMARY KEY,
-                    nombre TEXT NOT NULL,
-                    descripcion TEXT,
-                    precio DECIMAL(10,2)
-                )
-            """)
-            # Tabla de órdenes (añadir campo estado)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS ordenes (
-                    id SERIAL PRIMARY KEY,
-                    usuario_id INTEGER REFERENCES usuarios(id),
-                    platillo_id INTEGER REFERENCES platillos(id),
-                    cantidad INTEGER NOT NULL,
-                    total DECIMAL(10,2) NOT NULL,
-                    creado_en TIMESTAMP DEFAULT NOW(),
-                    estado TEXT DEFAULT 'activa'
-                )
-            """)
-            # Tabla de citas (añadir campo estado)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS citas (
-                    id SERIAL PRIMARY KEY,
-                    usuario_id INTEGER REFERENCES usuarios(id),
-                    asunto TEXT,
-                    fecha TIMESTAMP NOT NULL,
-                    creado_en TIMESTAMP DEFAULT NOW(),
-                    estado TEXT DEFAULT 'activa'
-                )
-            """)
-            # Insertar platillos si no existen
-            cur.execute("SELECT COUNT(*) FROM platillos")
-            count = cur.fetchone()['count']
-            if count == 0:
-                cur.execute("INSERT INTO platillos (nombre, descripcion, precio) VALUES (%s, %s, %s)", 
-                            ('Pollo salteado con arroz blanco', 'Delicioso pollo salteado con vegetales y arroz blanco', 120.0))
-                cur.execute("INSERT INTO platillos (nombre, descripcion, precio) VALUES (%s, %s, %s)", 
-                            ('Ensalada César', 'Ensalada fresca con aderezo César y pollo a la parrilla', 80.0))
-                cur.execute("INSERT INTO platillos (nombre, descripcion, precio) VALUES (%s, %s, %s)", 
-                            ('Sopa de verduras', 'Sopa caliente de verduras de la temporada', 60.0))
+            cur.execute(create_sql)
+    print("Tablas creadas.")
 

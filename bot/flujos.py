@@ -36,10 +36,13 @@ def get_response(text, user_name):
 
     # teclado común
     keyboard = [
-        [InlineKeyboardButton("Ordenar comida a domicilio.", callback_data='ordenar_comida')],
-        [InlineKeyboardButton("Agendar una cita.", callback_data='agendar_cita')],
-        [InlineKeyboardButton("Ver mis órdenes", callback_data='revisar_ordenes')],
-        [InlineKeyboardButton("Ver mis citas", callback_data='revisar_citas')],
+        [InlineKeyboardButton("Ordenar comida a domicilio.🍗", callback_data='ordenar_comida')],
+        [InlineKeyboardButton("Agendar una cita.📅", callback_data='agendar_cita')],
+        [InlineKeyboardButton("Analizar calorías y nutrientes. 🥗", callback_data='ayuda_ia')],
+        [InlineKeyboardButton("Ver mis órdenes. 📦", callback_data='revisar_ordenes')],
+        [InlineKeyboardButton("Ver mis citas. 📅", callback_data='revisar_citas')],
+        [InlineKeyboardButton("Cancelar pedido. ❌", callback_data='cancelar_pedido')],
+        [InlineKeyboardButton("Cancelar cita. ❌", callback_data='cancelar_cita')],
     ]
 
     # saludos
@@ -52,10 +55,10 @@ def get_response(text, user_name):
 
     # comandos
     if lower == "/start":
-        respuestas.append(f"Hola {user_name}, bienvenido al bot de TecnoStore.")
+        respuestas.append(f"Hola {user_name}, bienvenido al bot.")
         return respuestas, None
     if lower == "/help":
-        respuestas.append("¡Hola! Soy el asistente virtual de TecnoStore. Puedes saludarme con 'hola'.")
+        respuestas.append("¡Hola! Soy el asistente virtual. Puedes saludarme con 'hola'.")
         return respuestas, None
 
     # callbacks (cuando el usuario selecciona una opción)
@@ -128,7 +131,14 @@ def get_response(text, user_name):
         respuestas.append("Por favor ingresa la fecha y hora deseada en formato YYYY-MM-DD HH:MM")
         respuestas.append("Ejemplo: 2025-10-12 15:30")
         return respuestas, None
+    
+    if lower in ("ayuda_ia"):
+        respuestas.append("🥗 Análisis Nutricional con IA")
+        respuestas.append("Por favor, describe el platillo del que quieres conocer la información nutricional.")
+        respuestas.append("Por ejemplo: 'pollo salteado con arroz' o 'ensalada césar'")
+        return respuestas, None
     # fallback
+
     respuestas.append("No entendí tu mensaje. Puedes escribir 'hola' o usar los botones.")
     markup = InlineKeyboardMarkup(keyboard)
     return respuestas, markup
