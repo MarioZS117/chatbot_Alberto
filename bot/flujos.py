@@ -137,8 +137,15 @@ def get_response(text, user_name):
         respuestas.append("Por favor, describe el platillo del que quieres conocer la información nutricional.")
         respuestas.append("Por ejemplo: 'pollo salteado con arroz' o 'ensalada césar'")
         return respuestas, None
+    
+    if lower in ("cancelar_pedido"):
+        respuestas.append("🚫 Cancelar Pedido")
+        respuestas.append("Verificando tus pedidos activos...")
+        return respuestas, None
+    if lower in ("cancelar_cita"):
+        respuestas.append("Selecciona *cancelar cita* en la cita que deseas cancelar.")
+        return respuestas, None
     # fallback
-
     respuestas.append("No entendí tu mensaje. Puedes escribir 'hola' o usar los botones.")
     markup = InlineKeyboardMarkup(keyboard)
     return respuestas, markup

@@ -3,7 +3,7 @@ from telegram import Update, InlineKeyboardButton
 from telegram.ext import ContextTypes
 import bot.flujos as flujos_mod
 from bot.flujos import get_response
-from bot.utils import guardar_usuario, log, get_usuario_id, get_platillo_id, guardar_orden
+from bot.utils import guardar_usuario, log, get_usuario_id, get_platillo_id, guardar_orden, get_orden_ids_por_usuario
 from telegram import InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler
 import requests
@@ -122,6 +122,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text("Formato inválido. Por favor envía tus datos en una sola línea separados por comas: Nombre, Teléfono, Correo")
                 return
+            
+        expecting_user_selection = context.user_data.get('expecting_user_selection', False)
+        if expecting_user_selection:
+            await update.message.reply_text("Por favor selecciona la opción que deseas cancelar usando los botones correspondientes.")
+            for i, r in enumerate(respuestas):
+                await update.message.reply_text(f"{i + 1}. {r}")
+            context.user_data.pop('expecting_user_selection', None)
+            return
 
         # Si estamos esperando la cantidad para finalizar una orden
         # Si estamos esperando la fecha/hora para una cita
@@ -346,6 +354,7 @@ async def ai_handle_nutrition(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Maneja callbacks de botones inline."""
     try:
+        pedido_id = get_orden_ids_por_usuario(update.effective_chat.id) if update.effective_chat else None
         query = update.callback_query
         await query.answer()
         data = query.data
@@ -382,6 +391,99 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             # después de elegir flujo, pedimos los datos personales
             context.user_data['expecting_user_data'] = True
             respuestas, markup = get_response('', user_name)
+        elif data in ('cancelar_pedido', 'cancelar_cita'):
+            context.user_data['selected_flow'] = data
+            try:
+                flujos_mod.seleccion = data
+            except Exception:
+                setattr(flujos_mod, 'seleccion', data)
+            
+            # Manejar específicamente la cancelación de pedidos
+            if data == 'cancelar_pedido':
+                # Obtener usuario_id
+                chat_id = query.message.chat.id if query and query.message and query.message.chat else None
+                usuario_id = None
+                
+                if chat_id is not None:
+                    try:
+                        usuario_id = get_usuario_id(chat_id)
+                    except Exception:
+                        usuario_id = None
+                
+                if not usuario_id:
+                    context.user_data['post_review_action'] = data
+                    context.user_data['expecting_user_data'] = True
+                    await query.message.reply_text("Para verificar tu identidad, por favor ingresa tus datos: Nombre, Teléfono, Correo")
+                    return
+                
+                # Obtener órdenes activas directamente con el parámetro solo_activas
+                from bot.utils import obtener_ordenes_por_usuario
+                ordenes_activas = obtener_ordenes_por_usuario(usuario_id, solo_activas=True)
+                
+                if not ordenes_activas:
+                    await query.message.reply_text("No tienes pedidos activos para cancelar.")
+                    return
+                
+                # Mostrar órdenes activas con botones para cancelar
+                await query.message.reply_text(f"📦 Tienes {len(ordenes_activas)} pedidos activos:")
+                
+                keyboard = []
+                for orden in ordenes_activas:
+                    fecha_str = orden['creado_en'].strftime('%d/%m/%Y %H:%M') if orden['creado_en'] else 'Fecha no disponible'
+                    texto_boton = f"❌ {orden['cantidad']}x {orden['platillo']} - ${orden['total']} ({fecha_str})"
+                    keyboard.append([InlineKeyboardButton(texto_boton, callback_data=f'cancelar_orden_{orden["id"]}')])
+                
+                keyboard.append([InlineKeyboardButton("🔙 Volver al menú principal", callback_data='menu_principal')])
+                markup = InlineKeyboardMarkup(keyboard)
+                
+                await query.message.reply_text(
+                    "Selecciona el pedido que deseas cancelar:", 
+                    reply_markup=markup
+                )
+                return
+            else:
+                # Para cancelar_cita
+                # Obtener usuario_id
+                chat_id = query.message.chat.id if query and query.message and query.message.chat else None
+                usuario_id = None
+                
+                if chat_id is not None:
+                    try:
+                        usuario_id = get_usuario_id(chat_id)
+                    except Exception:
+                        usuario_id = None
+                
+                if not usuario_id:
+                    context.user_data['post_review_action'] = data
+                    context.user_data['expecting_user_data'] = True
+                    await query.message.reply_text("Para verificar tu identidad, por favor ingresa tus datos: Nombre, Teléfono, Correo")
+                    return
+                
+                # Obtener citas activas
+                from bot.utils import obtener_citas_por_usuario
+                citas_activas = obtener_citas_por_usuario(usuario_id, solo_activas=True)
+                
+                if not citas_activas:
+                    await query.message.reply_text("No tienes citas activas para cancelar.")
+                    return
+                
+                # Mostrar citas activas con botones para cancelar
+                await query.message.reply_text(f"📅 Tienes {len(citas_activas)} citas activas:")
+                
+                keyboard = []
+                for cita in citas_activas:
+                    fecha_str = cita['fecha'].strftime('%d/%m/%Y %H:%M') if cita['fecha'] else 'Fecha no disponible'
+                    texto_boton = f"❌ {cita['asunto']} - {fecha_str}"
+                    keyboard.append([InlineKeyboardButton(texto_boton, callback_data=f'cancelar_cita_{cita["id"]}')])
+                
+                keyboard.append([InlineKeyboardButton("🔙 Volver al menú principal", callback_data='menu_principal')])
+                markup = InlineKeyboardMarkup(keyboard)
+                
+                await query.message.reply_text(
+                    "Selecciona la cita que deseas cancelar:", 
+                    reply_markup=markup
+                )
+                return
         else:
             respuestas, markup = get_response(data, user_name)
 
@@ -419,8 +521,65 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 context.user_data['expecting_quantity'] = True
             return
 
+        # Manejar la cancelación específica de una orden
+        elif data.startswith('cancelar_orden_'):
+            orden_id = data.replace('cancelar_orden_', '')
+            chat_id = query.message.chat.id if query and query.message and query.message.chat else None
+            usuario_id = get_usuario_id(chat_id) if chat_id else None
+            
+            if usuario_id:
+                from bot.utils import cancelar_orden
+                if cancelar_orden(orden_id, usuario_id):
+                    await query.message.reply_text(f"✅ Pedido #{orden_id} cancelado exitosamente.")
+                    
+                    # Mostrar menú principal nuevamente
+                    keyboard = [
+                        [InlineKeyboardButton("Ordenar comida a domicilio.🍗", callback_data='ordenar_comida')],
+                        [InlineKeyboardButton("Agendar una cita.📅", callback_data='agendar_cita')],
+                        [InlineKeyboardButton("Analizar calorías y nutrientes. 🥗", callback_data='ayuda_ia')],
+                        [InlineKeyboardButton("Ver mis órdenes. 📦", callback_data='revisar_ordenes')],
+                        [InlineKeyboardButton("Ver mis citas. 📅", callback_data='revisar_citas')],
+                        [InlineKeyboardButton("Cancelar pedido. ❌", callback_data='cancelar_pedido')],
+                        [InlineKeyboardButton("Cancelar cita. ❌", callback_data='cancelar_cita')],
+                    ]
+                    markup = InlineKeyboardMarkup(keyboard)
+                    await query.message.reply_text("¿Qué más puedo ayudarte?", reply_markup=markup)
+                else:
+                    await query.message.reply_text("❌ No se pudo cancelar el pedido. Verifica que sea tuyo y esté activo.")
+            else:
+                await query.message.reply_text("❌ No se pudo verificar tu identidad. Intenta nuevamente.")
+                
+        # Manejar la cancelación específica de una cita
+        elif data.startswith('cancelar_cita_'):
+            cita_id = data.replace('cancelar_cita_', '')
+            chat_id = query.message.chat.id if query and query.message and query.message.chat else None
+            usuario_id = get_usuario_id(chat_id) if chat_id else None
+            
+            if usuario_id:
+                from bot.utils import cancelar_cita
+                if cancelar_cita(cita_id, usuario_id):
+                    await query.message.reply_text(f"✅ Cita #{cita_id} cancelada exitosamente.")
+                    
+                    # Mostrar menú principal nuevamente
+                    keyboard = [
+                        [InlineKeyboardButton("Ordenar comida a domicilio.🍗", callback_data='ordenar_comida')],
+                        [InlineKeyboardButton("Agendar una cita.📅", callback_data='agendar_cita')],
+                        [InlineKeyboardButton("Analizar calorías y nutrientes. 🥗", callback_data='ayuda_ia')],
+                        [InlineKeyboardButton("Ver mis órdenes. 📦", callback_data='revisar_ordenes')],
+                        [InlineKeyboardButton("Ver mis citas. 📅", callback_data='revisar_citas')],
+                        [InlineKeyboardButton("Cancelar pedido. ❌", callback_data='cancelar_pedido')],
+                        [InlineKeyboardButton("Cancelar cita. ❌", callback_data='cancelar_cita')],
+                    ]
+                    markup = InlineKeyboardMarkup(keyboard)
+                    await query.message.reply_text("¿Qué más puedo ayudarte?", reply_markup=markup)
+                else:
+                    await query.message.reply_text("❌ No se pudo cancelar la cita. Verifica que sea tuya y esté activa.")
+            else:
+                await query.message.reply_text("❌ No se pudo verificar tu identidad. Intenta nuevamente.")
+            return
+            
         # Nuevo: revisar órdenes o citas
-        if data in ('revisar_ordenes', 'revisar_citas'):
+        elif data in ('revisar_ordenes', 'revisar_citas'):
             # Intentamos resolver el usuario: preferimos chat_id (verificación por chat),
             # luego fallback a pending_user si la búsqueda por chat_id falla.
             pending = context.user_data.get('pending_user')

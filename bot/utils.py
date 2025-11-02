@@ -3,7 +3,7 @@
 
 import datetime
 from fpdf import FPDF
-from bot.model.neonbd import get_connection, ensure_tables
+from bot.model.neonbd import get_connection
 
 
 def log(message, level="INFO"):
@@ -35,7 +35,7 @@ def guardar_usuario(nombre, correo, telefono, chat_id):
 
     Crea la tabla si no existe y luego inserta el registro.
     """
-    ensure_tables()
+    # ensure_tables()
     with get_connection() as conn:
         with conn.cursor() as cur:
             # Si nos dieron chat_id, comprobar si ya existe un usuario con ese chat_id
@@ -63,7 +63,7 @@ def guardar_orden(usuario_id, platillo_id, cantidad, total, creado_en=datetime.d
 
     Crea la tabla si no existe y luego inserta el registro.
     """
-    ensure_tables()
+    # ensure_tables()
     insert_sql = """
     INSERT INTO ordenes (usuario_id, platillo_id, cantidad, total, creado_en)
     VALUES (%s, %s, %s, %s, %s)
@@ -105,20 +105,30 @@ def get_platillo_id(nombre):
             return row['id'] if row else None
 
 
-def obtener_ordenes_por_usuario(usuario_id):
+def obtener_ordenes_por_usuario(usuario_id, solo_activas=False):
     """Devuelve una lista de órdenes (con datos de platillo) para el usuario dado.
 
     Cada elemento es un dict con keys: id, platillo, cantidad, total, creado_en
+    
+    Args:
+        usuario_id: ID del usuario
+        solo_activas: Si es True, devuelve solo órdenes con estado 'activa' o NULL
     """
     if usuario_id is None:
         return []
+    
     sql = """
-    SELECT o.id, COALESCE(p.nombre, '') AS platillo, o.cantidad, o.total, o.creado_en
+    SELECT o.id, COALESCE(p.nombre, '') AS platillo, o.cantidad, o.total, o.creado_en, 
+           COALESCE(o.estado, 'activa') AS estado
     FROM ordenes o
     LEFT JOIN platillos p ON o.platillo_id = p.id
     WHERE o.usuario_id = %s
-    ORDER BY o.creado_en DESC
     """
+    
+    if solo_activas:
+        sql += " AND (o.estado IS NULL OR o.estado = 'activa')"
+        
+    sql += " ORDER BY o.creado_en DESC"
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, (usuario_id,))
@@ -126,19 +136,27 @@ def obtener_ordenes_por_usuario(usuario_id):
             return rows or []
 
 
-def obtener_citas_por_usuario(usuario_id):
+def obtener_citas_por_usuario(usuario_id, solo_activas=False):
     """Devuelve una lista de citas para el usuario dado.
 
     Cada elemento contiene: id, asunto, fecha, creado_en
+    
+    Args:
+        usuario_id: ID del usuario
+        solo_activas: Si es True, devuelve solo citas con estado 'activa' o NULL
     """
     if usuario_id is None:
         return []
     sql = """
-    SELECT id, asunto, fecha, creado_en
+    SELECT id, asunto, fecha, creado_en, COALESCE(estado, 'activa') AS estado
     FROM citas
     WHERE usuario_id = %s
-    ORDER BY fecha DESC
     """
+    
+    if solo_activas:
+        sql += " AND (estado IS NULL OR estado = 'activa')"
+        
+    sql += " ORDER BY fecha DESC"
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, (usuario_id,))
@@ -151,7 +169,7 @@ def guardar_cita(usuario_id, asunto, fecha, creado_en=datetime.datetime.now()):
 
     Es idempotente respecto a la creación de las tablas; retorna la fila insertada.
     """
-    ensure_tables()
+    # ensure_tables()
     insert_sql = """
     INSERT INTO citas (usuario_id, fecha, creado_en)
     VALUES (%s, %s, %s)
@@ -179,3 +197,28 @@ def guardar_cita(usuario_id, asunto, fecha, creado_en=datetime.datetime.now()):
                 cur.execute(insert_sql, (usuario_id, fecha, creado_en))
             row = cur.fetchone()
             return row
+        
+def cancelar_orden(orden_id, usuario_id):
+    """Cancela (elimina) una orden dada su ID y el ID del usuario."""
+    update_sql = "UPDATE ordenes SET estado = 'cancelada' WHERE id = %s AND usuario_id = %s"
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(update_sql, (orden_id, usuario_id))
+            return cur.rowcount > 0  # True si se actualizó alguna fila
+        
+def cancelar_cita(cita_id, usuario_id):
+    """Cancela (elimina) una cita dada su ID y el ID del usuario."""
+    update_sql = "UPDATE citas SET estado = 'cancelada' WHERE id = %s AND usuario_id = %s"
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(update_sql, (cita_id, usuario_id))
+            return cur.rowcount > 0  # True si se actualizó alguna fila
+        
+def get_orden_ids_por_usuario(usuario_id):
+    """Obtiene los IDs de las órdenes activas para un usuario dado."""
+    sql = "SELECT id FROM ordenes WHERE usuario_id = %s AND estado = 'activo'"
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (usuario_id,))
+            rows = cur.fetchall()
+            return [row['id'] for row in rows] if rows else []

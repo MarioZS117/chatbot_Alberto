@@ -16,7 +16,7 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 app.add_handler(CallbackQueryHandler(handle_callback_query))
 
-neonbd.ensure_tables()
+# neonbd.ensure_tables()
 
 print("Bot en ejecución...")
 app.run_polling()
